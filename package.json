@@ -1,0 +1,9 @@
+{
+  "name": "young-double-slit",
+  "private": true,
+  "description": "ヤングの二重スリット WebAR 教材(ビルド不要の静的サイト。package.json はテスト実行用のみ)",
+  "scripts": {
+    "test": "node --test test/",
+    "serve": "python3 -m http.server 8080"
+  }
+}

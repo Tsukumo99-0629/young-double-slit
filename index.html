@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no">
+<title>光の干渉:ヤングの実験 (AR)</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/style.css">
+<!--
+  外部通信なし。すべて同梱ファイル(vendor/)を読み込みます。
+  - three.js r159(MITライセンス)
+  - 8th Wall XR Engine バイナリ(Niantic Spatial, Inc.)※無改変。改変・再配布条件は vendor/xr/LICENSE 参照
+  This product includes the XR Engine software developed by Niantic Spatial, Inc.
+  Copyright (c) 2026 Niantic Spatial, Inc. All rights reserved.
+  Licensed under the XR Engine License Agreement: https://github.com/8thwall/engine/blob/main/LICENSE
+-->
+<script src="vendor/three/three.min.js"></script>
+<script src="vendor/xr/xr.js" async data-preload-chunks="slam"></script>
+</head>
+<body>
+
+<canvas id="view-canvas" class="stage" hidden></canvas>
+<canvas id="ar-canvas" class="stage" hidden></canvas>
+
+<!-- 開始画面 -->
+<section id="start-screen" class="overlay">
+  <div class="card">
+    <h1>光の干渉:ヤングの実験</h1>
+    <p class="lead">レーザー光が二重スリットを通ると、スクリーンに明暗の縞(干渉縞)ができます。
+      波長・スリット間隔・距離を変えて、縞の間隔 <b>Δx = Lλ/d</b> を確かめましょう。</p>
+    <button id="btn-ar" class="btn primary big" type="button">ARで始める</button>
+    <button id="btn-noar" class="btn big" type="button">ARなしで始める</button>
+    <p id="start-msg" class="msg" role="alert" hidden></p>
+    <button id="btn-fallback" class="btn warn big" type="button" hidden>ARなしモードに切り替える</button>
+    <p class="small">ARで始めると、カメラとモーションセンサー(傾き)の使用許可を求められます。映像は端末の外へ送信・保存されません。</p>
+    <p class="small"><button id="btn-credits-start" class="link" type="button">クレジット・ライセンス</button></p>
+  </div>
+</section>
+
+<!-- クレジット -->
+<section id="credits" class="overlay" hidden>
+  <div class="card scroll">
+    <h2>クレジット</h2>
+    <p><b>ARエンジン</b><br>
+      This product includes the XR Engine software developed by Niantic Spatial, Inc.<br>
+      (本製品には Niantic Spatial, Inc. が開発した XR Engine ソフトウェアが含まれています。)</p>
+    <p>Copyright &copy; 2026 Niantic Spatial, Inc. All rights reserved.</p>
+    <p>XR Engine は「XR Engine License Agreement」に基づいて使用しています(無改変・同梱)。
+      ライセンス全文:
+      <a href="https://github.com/8thwall/engine/blob/main/LICENSE" target="_blank" rel="noopener">https://github.com/8thwall/engine/blob/main/LICENSE</a>
+      / 同梱コピー: <a href="vendor/xr/LICENSE" target="_blank" rel="noopener">vendor/xr/LICENSE</a></p>
+    <p>無保証について: XR Engine は「現状有姿(AS IS)」で提供され、いかなる保証もありません。
+      同ライセンスの免責条項(Disclaimers)をご確認ください。
+      本教材は Niantic Spatial, Inc. 等と提携・後援・承認を受けたものではありません。</p>
+    <p><b>3Dグラフィックス</b><br>
+      three.js r159 &copy; 2010-2023 three.js authors, MIT License
+      (<a href="vendor/three/LICENSE" target="_blank" rel="noopener">vendor/three/LICENSE</a>)</p>
+    <p><b>全画面表示の処理</b><br>
+      js/ar.js の一部は 8th Wall XRExtras を基にしています。Copyright 2019 8th Wall, Inc., MIT License
+      (<a href="https://github.com/8thwall/web/blob/master/xrextras/LICENSE" target="_blank" rel="noopener">ライセンス全文</a>)</p>
+    <p><b>この教材について</b><br>
+      授業用の自作教材です。外部へのデータ送信、ログイン、解析、個人情報の保存は一切ありません。
+      スクリーンの縞は計算によるシミュレーションで、実際の実験結果ではありません。</p>
+    <button id="btn-credits-close" class="btn primary" type="button">閉じる</button>
+  </div>
+</section>
+
+<!-- 操作画面 -->
+<div id="hud" hidden>
+  <div id="topbar">
+    <button id="btn-home" class="btn small-btn" type="button">&larr; 最初へ</button>
+    <button id="btn-replace" class="btn small-btn" type="button" hidden>置き直す</button>
+    <span class="spacer"></span>
+    <button id="btn-credits" class="btn small-btn" type="button">クレジット</button>
+  </div>
+
+  <div id="banner" role="status" hidden>
+    <span id="banner-text"></span>
+    <button id="banner-action" class="btn small-btn" type="button" hidden>ARなしに切り替え</button>
+  </div>
+
+  <div id="panel">
+    <button id="panel-toggle" class="panel-head" type="button" aria-expanded="true">
+      <span id="panel-title">操作パネル</span><span id="panel-caret">&#9660;</span>
+    </button>
+    <div id="panel-body">
+      <div class="seg" role="tablist">
+        <button id="tab-observe" class="seg-btn active" type="button">観察</button>
+        <button id="tab-measure" class="seg-btn" type="button">測定</button>
+      </div>
+
+      <p class="scale-note">
+        スクリーンは<b>拡大表示</b>(実寸1mm = 模型10mm)、スリット間隔は<b>誇張</b>して描いています。
+        数値は必ずスクリーン下の<b>定規(実寸mm)</b>で読み取ってください。
+      </p>
+
+      <div class="row" id="row-lambda">
+        <label for="s-lambda">波長 λ</label>
+        <input id="s-lambda" type="range" min="380" max="750" step="1" value="650">
+        <output id="o-lambda">650 nm</output>
+      </div>
+      <div class="row">
+        <label for="s-d">スリット間隔 d</label>
+        <input id="s-d" type="range" min="0.10" max="1.00" step="0.01" value="0.25">
+        <output id="o-d">0.25 mm</output>
+      </div>
+      <div class="row">
+        <label for="s-L">距離 L</label>
+        <input id="s-L" type="range" min="0.50" max="2.00" step="0.01" value="1.00">
+        <output id="o-L">1.00 m</output>
+      </div>
+      <div class="row" id="row-size" hidden>
+        <label for="s-size">模型の大きさ</label>
+        <input id="s-size" type="range" min="0.3" max="3" step="0.05" value="1">
+        <output id="o-size">1.0 倍</output>
+      </div>
+      <p class="small">スリット幅 a = 0.04 mm(固定)</p>
+
+      <!-- 観察モード -->
+      <div id="observe-box">
+        <div class="toggles">
+          <label class="chk"><input id="c-white" type="checkbox"><span>白色光</span></label>
+          <label class="chk"><input id="c-wave" type="checkbox"><span>波面(模式図)</span></label>
+          <label class="chk"><input id="c-calc" type="checkbox"><span>Δx = Lλ/d を表示</span></label>
+        </div>
+        <p id="calc-readout" class="readout" hidden></p>
+        <p id="wave-note" class="small" hidden>波面は模式図です。表示上の波長とスリット間隔は、λ と d に比例させて描いています(実際の大きさではありません)。</p>
+        <div class="probe">
+          <b>スクリーン上の点 P を調べる</b>
+          <p id="probe-hint" class="small">スクリーンをタップすると P を置き、S&#8321;P と S&#8322;P の光線を表示します。</p>
+          <div id="probe-out" class="readout" hidden>
+            <div id="probe-pos"></div>
+            <div id="probe-len"></div>
+            <div id="probe-delta"></div>
+            <div id="probe-kind" class="kind"></div>
+          </div>
+          <button id="btn-probe-clear" class="btn small-btn" type="button" hidden>P を消す</button>
+        </div>
+      </div>
+
+      <!-- 測定モード -->
+      <div id="measure-box" hidden>
+        <p class="task">課題:波長がわからないレーザーです。縞の間隔から波長 λ を求めましょう。<br>
+          <span class="small">スクリーンの<b>暗線を2本タップ</b>してマーカー A, B を置くと距離が出ます(ドラッグ・再タップで修正)。
+            A, B の間に縞が何個あるか(n)を数えて、Δx = 距離 ÷ n を自分で計算し、λ = dΔx/L まで求めて入力します。</span></p>
+        <div class="readout">
+          <div>A: <span id="m-a">未設定</span></div>
+          <div>B: <span id="m-b">未設定</span></div>
+          <div>A-B の距離: <b id="m-dist">---</b></div>
+        </div>
+        <button id="btn-marker-clear" class="btn small-btn" type="button">マーカーを消す</button>
+
+        <div class="row">
+          <label for="i-n">縞の数 n</label>
+          <input id="i-n" type="text" inputmode="numeric" autocomplete="off" placeholder="例: 3">
+          <span class="unit">個</span>
+        </div>
+        <div class="row">
+          <label for="i-dx">縞の間隔 Δx</label>
+          <input id="i-dx" type="text" inputmode="decimal" autocomplete="off" placeholder="例: 2.5">
+          <span class="unit">mm</span>
+        </div>
+        <div class="row">
+          <label for="i-lam">求めた波長 λ</label>
+          <input id="i-lam" type="text" inputmode="decimal" autocomplete="off" placeholder="例: 600">
+          <span class="unit">nm</span>
+        </div>
+        <p id="m-msg" class="msg" role="alert" hidden></p>
+        <div class="btnrow">
+          <button id="btn-check" class="btn primary" type="button">答え合わせ</button>
+          <button id="btn-newtask" class="btn" type="button">新しい課題</button>
+        </div>
+        <div id="m-result" class="readout" hidden></div>
+        <table id="trials" class="trials" hidden>
+          <thead><tr><th>#</th><th>d (mm)</th><th>L (m)</th><th>Δx (mm)</th><th>求めたλ (nm)</th><th>誤差</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="small">記録表はこのページを開いている間だけ表示されます(保存・送信はされません)。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/physics.js"></script>
+<script src="js/apparatus.js"></script>
+<script src="js/ar.js"></script>
+<script src="js/viewer3d.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
